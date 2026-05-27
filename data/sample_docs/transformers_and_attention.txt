@@ -1,0 +1,85 @@
+Transformers and the Attention Mechanism
+=========================================
+
+The Attention Mechanism
+------------------------
+The attention mechanism is a technique that allows a neural network to focus on
+relevant parts of the input when producing each part of the output. Originally
+introduced for sequence-to-sequence machine translation, it has since become
+a foundational building block in modern deep learning architectures.
+
+Scaled Dot-Product Attention
+------------------------------
+The core operation in Transformer attention is scaled dot-product attention.
+Given a matrix of Queries (Q), Keys (K), and Values (V), the attention output
+is computed as:
+
+    Attention(Q, K, V) = softmax(QK^T / sqrt(d_k)) V
+
+The queries and keys are compared via dot products to produce attention scores.
+These scores are scaled by the square root of the key dimension d_k to prevent
+excessively large values that would push the softmax into regions with very
+small gradients. The softmax normalises the scores into a probability
+distribution, which is then used to compute a weighted sum of the values.
+
+Multi-Head Attention
+--------------------
+Multi-head attention runs the attention mechanism multiple times in parallel with
+different learned linear projections of the queries, keys, and values. Each
+parallel run is called an attention head. The outputs from all heads are
+concatenated and projected back to the original dimension. This allows the
+model to jointly attend to information from different representation subspaces
+at different positions.
+
+The Transformer Architecture
+------------------------------
+The Transformer architecture, introduced in "Attention Is All You Need" (Vaswani
+et al., 2017), relies entirely on attention mechanisms, dispensing with recurrence
+and convolutions entirely. The architecture consists of an encoder and a decoder.
+
+The encoder maps an input sequence of symbol representations to a sequence of
+continuous representations. The decoder then generates an output sequence, one
+symbol at a time, attending to the encoder output.
+
+Each encoder layer has two sub-layers: a multi-head self-attention mechanism and
+a fully connected feed-forward network. Residual connections and layer
+normalisation are applied around each sub-layer.
+
+Self-Attention
+--------------
+Self-attention, also called intra-attention, relates different positions of a
+single sequence to compute a representation of the sequence. This allows the
+model to look at other words in the input sequence while encoding a particular
+word. For example, when processing the word "it" in a sentence, self-attention
+allows the model to associate "it" with the noun it refers to.
+
+Positional Encoding
+--------------------
+Since the Transformer contains no recurrence or convolution, it has no inherent
+notion of the order of tokens in a sequence. Positional encodings are added to
+the input embeddings to inject information about the relative or absolute
+position of the tokens. The original paper uses sine and cosine functions of
+different frequencies for this purpose.
+
+BERT and GPT
+------------
+BERT (Bidirectional Encoder Representations from Transformers) is a pre-trained
+language model that uses only the encoder portion of the Transformer. It is
+trained on masked language modelling (predicting randomly masked tokens) and
+next sentence prediction. BERT is bidirectional, meaning it attends to both
+left and right context simultaneously.
+
+GPT (Generative Pre-trained Transformer) uses only the Transformer decoder with
+causal (left-to-right) attention masking. It is trained as a language model to
+predict the next token given all preceding tokens. GPT models can generate
+coherent long-form text and are the foundation of modern large language models.
+
+Fine-Tuning Pre-trained Models
+--------------------------------
+Pre-trained Transformer models learn rich general representations of language
+from large corpora. Fine-tuning adapts these representations to a specific
+downstream task by continuing training on a smaller labelled dataset.
+The fine-tuning process updates all model parameters or, in the case of
+parameter-efficient methods like LoRA, only a small fraction of them.
+This dramatically reduces the data and computation needed to achieve
+strong performance on specialised tasks.

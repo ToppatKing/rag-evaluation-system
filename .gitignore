@@ -1,0 +1,34 @@
+# Secrets and local config
+.env
+.env.*
+config/local.yaml
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+htmlcov/
+coverage.xml
+.coverage
+
+# FAISS index (large binary files — regenerate with scripts/ingest.py)
+data/faiss_index.faiss
+data/faiss_index.json
+data/*.faiss
+data/*.json
+
+# Evaluation results (generated output)
+results/
+
+# IDE
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

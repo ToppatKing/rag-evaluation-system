@@ -1,0 +1,85 @@
+Machine Learning Fundamentals
+==============================
+
+Introduction to Machine Learning
+---------------------------------
+Machine learning is a subset of artificial intelligence that enables computer systems
+to learn and improve from experience without being explicitly programmed. The core
+idea is to give machines access to data and let them learn for themselves.
+
+Supervised Learning
+-------------------
+Supervised learning is the most common type of machine learning. In supervised
+learning, an algorithm learns from labelled training data, where each example
+consists of an input and a known correct output. The model learns to map inputs
+to outputs and can then make predictions on unseen data.
+
+Common supervised learning algorithms include linear regression for continuous
+outputs, logistic regression for binary classification, decision trees, random
+forests, support vector machines, and neural networks.
+
+Unsupervised Learning
+---------------------
+Unsupervised learning involves finding hidden patterns or intrinsic structures in
+unlabelled data. Unlike supervised learning, there are no correct answers provided
+during training. Clustering algorithms such as k-means group similar data points
+together. Dimensionality reduction techniques such as Principal Component Analysis
+(PCA) and t-SNE reduce the number of features while preserving structure.
+
+Neural Networks and Deep Learning
+-----------------------------------
+Neural networks are computing systems loosely inspired by the biological neural
+networks in animal brains. A neural network consists of layers of interconnected
+nodes (neurons) that process information using connectionist approaches.
+
+Deep learning refers to neural networks with many layers (deep architectures).
+These networks can learn hierarchical representations of data automatically.
+Convolutional Neural Networks (CNNs) are particularly effective for image
+recognition tasks. Recurrent Neural Networks (RNNs) are designed for sequential
+data such as text and time series.
+
+The Vanishing Gradient Problem
+--------------------------------
+A key challenge in training deep networks is the vanishing gradient problem.
+During backpropagation, gradients shrink exponentially as they are propagated
+through many layers. This makes it difficult for the network to learn long-range
+dependencies. Solutions include residual connections (ResNets), LSTM units in
+recurrent networks, and the use of activation functions like ReLU that do not
+saturate for positive inputs.
+
+Regularisation Techniques
+--------------------------
+Overfitting occurs when a model learns the training data too well, including noise,
+and fails to generalise to new data. Regularisation techniques reduce overfitting:
+
+Dropout: randomly sets a fraction of neuron activations to zero during training,
+preventing co-adaptation and acting as an implicit ensemble of sub-networks.
+
+L1 and L2 regularisation: add penalty terms to the loss function proportional to
+the magnitude of the model weights, discouraging large weights.
+
+Batch normalisation: normalises the inputs to each layer, which acts as a
+mild regulariser and reduces sensitivity to the learning rate.
+
+Activation Functions
+--------------------
+Activation functions introduce non-linearity into the network. Without them, a
+multi-layer network would reduce to a linear transformation regardless of depth.
+
+The sigmoid function maps any value to (0, 1) and was historically popular but
+suffers from saturation. The hyperbolic tangent (tanh) maps to (-1, 1). The
+Rectified Linear Unit (ReLU) computes max(0, x) and is now the default choice
+for hidden layers due to its simplicity and effectiveness at avoiding the
+vanishing gradient problem.
+
+The softmax function is used in the output layer for multi-class classification.
+It converts a vector of raw scores (logits) into a probability distribution where
+all probabilities sum to one.
+
+Optimisation
+------------
+Training a neural network involves minimising a loss function using gradient
+descent. Stochastic Gradient Descent (SGD) updates parameters using the gradient
+computed on a small random batch of training examples. Momentum accelerates SGD
+in the relevant direction and dampens oscillations. The Adam optimiser adapts
+the learning rate for each parameter and combines momentum with RMSprop.
