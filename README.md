@@ -121,9 +121,13 @@ python scripts/run_evaluation.py \
 ║              RAG EVALUATION REPORT — 50 queries             ║
 ╠══════════════════════════════════════════════════════════════╣
 ║  Faithfulness       │ ████████████████░░░░ │  0.81 ± 0.09   ║
+║                     |                      |                ║
 ║  Answer Relevancy   │ █████████████████░░░ │  0.84 ± 0.07   ║
+║                     |                      |                ║
 ║  Context Precision  │ ███████████████░░░░░ │  0.76 ± 0.13   ║
+║                     |                      |                ║
 ║  Context Recall     │ ██████████████░░░░░░ │  0.72 ± 0.15   ║
+║                     |                      |                ║
 ║  ROUGE-L            │ ████████████░░░░░░░░ │  0.61 ± 0.18   ║
 ║  Avg Latency        │                      │  1.34s ± 0.41s ║
 ║  Token Efficiency   │                      │  0.23 ± 0.11   ║
