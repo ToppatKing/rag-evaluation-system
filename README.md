@@ -2,7 +2,7 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://github.com/yourusername/rag-evaluation-system/actions/workflows/tests.yml/badge.svg)](https://github.com/yourusername/rag-evaluation-system/actions)
+[![Tests](https://github.com/ToppatKing/rag-evaluation-system/actions/workflows/tests.yml/badge.svg)](https://github.com/ToppatKing/rag-evaluation-system/actions)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
 A production-grade **Retrieval-Augmented Generation (RAG)** pipeline with a multi-dimensional evaluation framework. Built to benchmark chunking strategies, retrieval methods, and generation quality on domain-specific corpora.
@@ -73,7 +73,7 @@ A production-grade **Retrieval-Augmented Generation (RAG)** pipeline with a mult
 ### 1. Install
 
 ```bash
-git clone https://github.com/yourusername/rag-evaluation-system.git
+git clone https://github.com/ToppatKing/rag-evaluation-system.git
 cd rag-evaluation-system
 pip install -e ".[dev]"
 ```
