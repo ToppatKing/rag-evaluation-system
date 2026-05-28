@@ -15,25 +15,25 @@ A production-grade **Retrieval-Augmented Generation (RAG)** pipeline with a mult
 ┌──────────────────────────────────────────────────────────────────────┐
 │                        RAG PIPELINE                                  │
 │                                                                      │
-│  ┌─────────────┐    ┌─────────────┐    ┌────────────────────────┐   │
-│  │  INGESTION  │    │  RETRIEVAL  │    │      GENERATION        │   │
-│  │             │    │             │    │                        │   │
-│  │ DocumentLoad│───▶│  Embedder   │    │  PromptBuilder         │   │
-│  │ Preprocessor│    │  (ST / OAI) │    │  Generator             │   │
-│  │ Chunker     │───▶│  FAISSStore │───▶│  (OpenAI / Anthropic)  │   │
-│  │ (Fixed /    │    │  Retriever  │    │                        │   │
-│  │  Recursive /│    │  (Dense/MMR)│    └────────────────────────┘   │
-│  │  Semantic)  │    └─────────────┘               │                 │
-│  └─────────────┘                                  │                 │
-│                                                   ▼                 │
-│  ┌────────────────────────────────────────────────────────────────┐ │
-│  │                     EVALUATION FRAMEWORK                       │ │
-│  │                                                                │ │
-│  │  Faithfulness │ AnswerRelevancy │ ContextPrecision │ ROUGE-L  │ │
-│  │  ContextRecall │ Latency │ TokenEfficiency │ BERTScore (opt.) │ │
-│  │                                                                │ │
-│  │  EvaluationReport ──▶ CSV / JSON / Console                    │ │
-│  └────────────────────────────────────────────────────────────────┘ │
+│  ┌─────────────┐    ┌─────────────┐    ┌────────────────────────┐    │
+│  │  INGESTION  │    │  RETRIEVAL  │    │      GENERATION        │    │
+│  │             │    │             │    │                        │    │
+│  │ DocumentLoad│──▶│  Embedder   │    │  PromptBuilder          │   │
+│  │ Preprocessor│    │  (ST / OAI) │    │  Generator             │    │
+│  │ Chunker     │──▶│  FAISSStore │───▶│  (OpenAI / Anthropic)  │    │
+│  │ (Fixed /    │    │  Retriever  │    │                        │    │
+│  │  Recursive /│    │  (Dense/MMR)│    └────────────────────────┘    │
+│  │  Semantic)  │    └─────────────┘               │                  │
+│  └─────────────┘                                  │                  │
+│                                                   ▼                  │
+│  ┌────────────────────────────────────────────────────────────────┐  │
+│  │                     EVALUATION FRAMEWORK                       │  │
+│  │                                                                │  │
+│  │  Faithfulness │ AnswerRelevancy │ ContextPrecision │ ROUGE-L   │  │
+│  │  ContextRecall │ Latency │ TokenEfficiency │ BERTScore (opt.)  │  │
+│  │                                                                │  │
+│  │  EvaluationReport ──▶ CSV / JSON / Console                    │   │
+│  └────────────────────────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
