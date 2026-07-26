@@ -23,7 +23,8 @@ A production-grade **Retrieval-Augmented Generation (RAG)** pipeline with a mult
 │  │ Chunker     │──▶│  FAISSStore │───▶│  (OpenAI / Anthropic)  │    │
 │  │ (Fixed /    │    │  Retriever  │    │                        │    │
 │  │  Recursive /│    │  (Dense/MMR)│    └────────────────────────┘    │
-│  │  Semantic)  │    └─────────────┘               │                  │
+|  |  Semantic)  |    │   HyDE)     │                                  | 
+│  │             │    └─────────────┘               │                  │
 │  └─────────────┘                                  │                  │
 │                                                   ▼                  │
 │  ┌────────────────────────────────────────────────────────────────┐  │
@@ -47,7 +48,7 @@ A production-grade **Retrieval-Augmented Generation (RAG)** pipeline with a mult
 | **Chunking** | Fixed-size, Recursive, Semantic (embedding-based) |
 | **Embedding** | `sentence-transformers` (local) or OpenAI `text-embedding-3-small` |
 | **Vector Store** | FAISS with cosine similarity; persistent index |
-| **Retrieval** | Dense similarity search; MMR for diversity |
+| **Retrieval** | Dense similarity search; MMR for diversityy; HyDE zero-shot retrieval |
 | **Generation** | OpenAI GPT-4o or Anthropic Claude; structured prompting |
 | **Evaluation** | 7 metrics; LLM-as-judge + classical NLP |
 | **Reporting** | Console, CSV, JSON; per-query breakdown |
@@ -193,7 +194,7 @@ chunking:
 
 retrieval:
   top_k: 5
-  method: mmr              # dense | mmr
+  method: mmr              # dense | mmr | hyde
   mmr_lambda: 0.5
 
 generation:
@@ -202,6 +203,28 @@ generation:
   temperature: 0.1
   max_tokens: 512
 ```
+## CUAD Legal Corpus Setup
+
+To run experiments on the [CUAD dataset](https://arxiv.org/abs/2103.06268) (510 SEC-filed contracts, 41 clause categories):
+
+```bash
+# Install the extra dependency
+pip install datasets
+
+# Download contracts, build eval dataset, and ingest into FAISS
+python scripts/setup_cuad.py --config config/config.yaml
+```
+
+Then run the three-way retrieval ablation:
+
+```bash
+python scripts/run_ablation.py \
+  --config config/config.yaml \
+  --dataset data/cuad_eval.json \
+  --output results/cuad_ablation/
+```
+
+This evaluates **Dense vs. MMR vs. HyDE** across all 7 metrics on the same corpus and produces `results/cuad_ablation/ablation_report.txt`.
 
 ---
 
@@ -230,6 +253,7 @@ class ExactMatchMetric(BaseMetric):
                       == response.answer.strip().lower())
         return MetricResult(name=self.name, score=score)
 ```
+
 
 ---
 
