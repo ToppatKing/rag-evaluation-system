@@ -166,7 +166,9 @@ rag-evaluation-system/
 │   └── test_metrics.py
 ├── scripts/
 │   ├── ingest.py
+│   ├── setup_cuad.py
 │   ├── run_demo.py
+│   ├── run_ablation.py
 │   └── run_evaluation.py
 └── data/
     └── sample_docs/
