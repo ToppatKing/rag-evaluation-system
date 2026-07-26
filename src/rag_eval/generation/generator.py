@@ -102,6 +102,29 @@ class BaseGenerator(ABC):
             f"[Context {i + 1}]\n{ctx}" for i, ctx in enumerate(contexts)
         )
         return _CONTEXT_TEMPLATE.format(context=context_text, query=query)
+        
+    @abstractmethod
+    def generate_hypothetical_doc(self, query: str, instruction: str) -> str:
+        """Generate a *hypothetical* passage that would answer *query*.
+ 
+        The passage is used only as a query vector — it is never shown to users.
+        It may be factually incorrect; that is acceptable by design (HyDE §2.3).
+ 
+        Parameters
+        ----------
+        query : str
+            The user's search query.
+        instruction : str
+            Domain-specific instruction, e.g.:
+            "Write a legal contract clause that answers the question."
+ 
+        Returns
+        -------
+        str
+            The generated hypothetical passage.
+        """
+ 
+ 
 
 
 # ── OpenAI ────────────────────────────────────────────────────────────────────
@@ -166,7 +189,33 @@ class OpenAIGenerator(BaseGenerator):
             latency_s=latency,
         )
 
-
+    def generate_hypothetical_doc(self, query: str, instruction: str) -> str:
+        prompt = (
+            f"{instruction}\n\n"
+            f"Question: {query}\n\n"
+            "Passage:"
+        )
+        try:
+            response = self.client.chat.completions.create(
+                model=self.config.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a document writer.  Write only the requested "
+                            "passage, with no preamble, no caveats, and no markdown."
+                        ),
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.7,        # slight randomness helps HyDE
+                max_tokens=256,         # hypothetical doc should be concise
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as exc:
+            logger.error("OpenAI hypothetical-doc generation failed: %s", exc)
+            raise
+ 
 # ── Anthropic ─────────────────────────────────────────────────────────────────
 
 
@@ -222,7 +271,27 @@ class AnthropicGenerator(BaseGenerator):
             latency_s=latency,
         )
 
-
+    def generate_hypothetical_doc(self, query: str, instruction: str) -> str:
+        prompt = (
+            f"{instruction}\n\n"
+            f"Question: {query}\n\n"
+            "Passage:"
+        )
+        try:
+            message = self.client.messages.create(
+                model=self.config.model,
+                max_tokens=256,
+                system=(
+                    "You are a document writer.  Write only the requested "
+                    "passage, with no preamble, no caveats, and no markdown."
+                ),
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return message.content[0].text.strip()
+        except Exception as exc:
+            logger.error("Anthropic hypothetical-doc generation failed: %s", exc)
+            raise
+ 
 # ── Factory ───────────────────────────────────────────────────────────────────
 
 
