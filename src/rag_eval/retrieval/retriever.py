@@ -1,11 +1,8 @@
 """
-src/rag_eval/retrieval/retriever.py
-====================================
-Drop-in replacement for the existing file.
 
-Changes vs. baseline (v1.0-baseline tag):
+
+Changes vs. baseline 
   - Added HyDERetriever (lines marked ← NEW)
-  - Everything above the ← NEW block is unchanged from baseline.
 
 The retriever is chosen in config.yaml:
     retrieval:
@@ -44,7 +41,7 @@ class RetrievedChunk:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Base class  (unchanged from baseline)
+# Base class                         
 # ──────────────────────────────────────────────────────────────────────────────
 
 class BaseRetriever(ABC):
@@ -61,7 +58,7 @@ class BaseRetriever(ABC):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Dense retriever  (unchanged from baseline)
+# Dense retriever 
 # ──────────────────────────────────────────────────────────────────────────────
 
 class DenseRetriever(BaseRetriever):
@@ -91,7 +88,7 @@ class DenseRetriever(BaseRetriever):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# MMR retriever  (unchanged from baseline)
+# MMR retriever                         
 # ──────────────────────────────────────────────────────────────────────────────
 
 class MMRRetriever(BaseRetriever):
