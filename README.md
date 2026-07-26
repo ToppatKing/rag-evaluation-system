@@ -48,7 +48,7 @@ A production-grade **Retrieval-Augmented Generation (RAG)** pipeline with a mult
 | **Chunking** | Fixed-size, Recursive, Semantic (embedding-based) |
 | **Embedding** | `sentence-transformers` (local) or OpenAI `text-embedding-3-small` |
 | **Vector Store** | FAISS with cosine similarity; persistent index |
-| **Retrieval** | Dense similarity search; MMR for diversityy; HyDE zero-shot retrieval |
+| **Retrieval** | Dense similarity search; MMR for diversity; HyDE zero-shot retrieval |
 | **Generation** | OpenAI GPT-4o or Anthropic Claude; structured prompting |
 | **Evaluation** | 7 metrics; LLM-as-judge + classical NLP |
 | **Reporting** | Console, CSV, JSON; per-query breakdown |
