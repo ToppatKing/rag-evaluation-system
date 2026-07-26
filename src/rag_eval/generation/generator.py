@@ -196,8 +196,8 @@ class OpenAIGenerator(BaseGenerator):
             "Passage:"
         )
         try:
-            response = self.client.chat.completions.create(
-                model=self.config.model,
+            response = self._client.chat.completions.create(
+                model=self.model,
                 messages=[
                     {
                         "role": "system",
@@ -278,9 +278,10 @@ class AnthropicGenerator(BaseGenerator):
             "Passage:"
         )
         try:
-            message = self.client.messages.create(
-                model=self.config.model,
+            message = self._client.messages.create(
+                model=self.model,
                 max_tokens=256,
+                temperature=0.7,
                 system=(
                     "You are a document writer.  Write only the requested "
                     "passage, with no preamble, no caveats, and no markdown."
