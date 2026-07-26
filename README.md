@@ -22,7 +22,7 @@ A production-grade **Retrieval-Augmented Generation (RAG)** pipeline with a mult
 │  │ Preprocessor│    │  (ST / OAI) │    │  Generator             │    │
 │  │ Chunker     │──▶│  FAISSStore │───▶│  (OpenAI / Anthropic)  │    │
 │  │ (Fixed /    │    │  Retriever  │    │                        │    │
-│  │  Recursive /│    │  (Dense/MMR)│    └────────────────────────┘    │
+│  │  Recursive /│    │  (Dense/MMR/│    └────────────────────────┘    │
 |  |  Semantic)  |    │   HyDE)     │                                  | 
 │  │             │    └─────────────┘               │                  │
 │  └─────────────┘                                  │                  │
