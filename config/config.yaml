@@ -1,57 +1,97 @@
-# rag-evaluation-system configuration
-# Copy to config/local.yaml and customise; local.yaml is gitignored.
+# Changes vs. baseline (v1.0-baseline):
+#   - retrieval.method now accepts "hyde" in addition to "dense" | "mmr"
+#   - added retrieval.hyde block                    ← NEW
+#   - added cuad block                              ← NEW
 
-# ── Ingestion ────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Ingestion
+# ─────────────────────────────────────────────────────────────────────────────
 ingestion:
-  supported_extensions: [".txt", ".md", ".pdf", ".docx"]
-  encoding: "utf-8"
+  docs_dir: data/sample_docs/          # default; overridden by --docs CLI flag
+  supported_extensions: [".pdf", ".txt", ".md", ".docx"]
 
-# ── Chunking ─────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Chunking
+# ─────────────────────────────────────────────────────────────────────────────
 chunking:
-  strategy: "recursive"     # fixed | recursive | semantic
-  chunk_size: 512           # target characters (fixed/recursive) or tokens
-  chunk_overlap: 64         # character overlap between consecutive chunks
-  # semantic chunker only
-  semantic_threshold: 0.85  # cosine similarity threshold to merge sentences
+  strategy: recursive                  # fixed | recursive | semantic
+  chunk_size: 512
+  chunk_overlap: 64
+  # Legal contracts benefit from larger chunks — individual clauses can be long.
+  # For CUAD experiments, consider bumping chunk_size to 1024.
 
-# ── Embedding ─────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Embedding
+# ─────────────────────────────────────────────────────────────────────────────
 embedding:
-  provider: "sentence_transformers"   # sentence_transformers | openai
-  # sentence_transformers backend
-  model_name: "all-MiniLM-L6-v2"
-  # openai backend
-  # model_name: "text-embedding-3-small"
-  batch_size: 64
-  normalize: true
+  provider: sentence_transformers      # sentence_transformers | openai
+  model: all-MiniLM-L6-v2             # local model; no API key needed
+  # For higher quality (slower, costs money):
+  #   provider: openai
+  #   model: text-embedding-3-small
 
-# ── Vector Store ──────────────────────────────────────────────────────────────
-vector_store:
-  index_path: "data/faiss_index"
-  metric: "cosine"          # cosine | l2
-
-# ── Retrieval ─────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Retrieval
+# ─────────────────────────────────────────────────────────────────────────────
 retrieval:
+  method: dense                        # dense | mmr | hyde  ← hyde is NEW
   top_k: 5
-  method: "mmr"             # dense | mmr
-  # MMR: trade-off between relevance (1.0) and diversity (0.0)
-  mmr_lambda: 0.6
-  # fetch_k candidates before MMR re-ranking
-  mmr_fetch_k: 20
 
-# ── Generation ────────────────────────────────────────────────────────────────
+  # MMR-specific  (ignored when method != mmr)
+  mmr_lambda: 0.5                      # 1.0 = pure relevance, 0.0 = pure diversity
+  fetch_k: 20                          # candidate pool before MMR re-ranking
+
+  # ── HyDE-specific  (ignored when method != hyde)  ← NEW ─────────────────
+  hyde:
+    n_hypothetical: 1                  # how many hypothetical docs to average
+                                       # paper default: 1; higher = less variance, more cost
+    # Domain instruction sent to the LLM before each query.
+    # This is the most important HyDE knob — it tells the LLM what KIND of
+    # document to write.  Must match your corpus register.
+    #
+    # For CUAD (SEC-filed commercial contracts):
+    domain_instruction: >
+      Please write a legal contract clause that directly answers the following
+      question. Write it as if it were extracted from an SEC-filed commercial
+      agreement (e.g. a service agreement, license agreement, or NDA).
+      Be specific: name parties as "Company" and "Counterparty," include
+      concrete obligations, and use the formal register of US contract law.
+      Do NOT include a preamble or explanation — only the clause text.
+
+    # Alternative instructions for other corpus types (comment out the above
+    # and uncomment the relevant one):
+    #
+    # Generic / Wikipedia:
+    # domain_instruction: >
+    #   Please write a passage that directly answers the following question.
+    #   Write it as if it were a Wikipedia paragraph.
+    #
+    # Scientific papers:
+    # domain_instruction: >
+    #   Please write a scientific paper passage that answers the following question.
+    #   Use academic register and cite specific mechanisms or findings.
+    #
+    # News articles:
+    # domain_instruction: >
+    #   Please write a news article paragraph that answers the following question.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Generation
+# ─────────────────────────────────────────────────────────────────────────────
 generation:
-  provider: "openai"        # openai | anthropic
-  model: "gpt-4o-mini"
+  provider: openai                     # openai | anthropic
+  model: gpt-4o
   temperature: 0.1
   max_tokens: 512
-  system_prompt: |
-    You are a precise, factual assistant. Answer the user's question using ONLY
-    the provided context. If the context does not contain sufficient information,
-    state that clearly rather than speculating. Be concise and accurate.
+  # Note: HyDE also uses this LLM (for the hypothetical-doc step) but always
+  # overrides temperature=0.7 and max_tokens=256 for that specific call.
 
-# ── Evaluation ────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Evaluation
+# ─────────────────────────────────────────────────────────────────────────────
 evaluation:
-  # which metrics to run
+  eval_dataset: data/eval_dataset.json
+  output_dir: results/
   metrics:
     - faithfulness
     - answer_relevancy
@@ -60,9 +100,36 @@ evaluation:
     - rouge_l
     - latency
     - token_efficiency
-  # LLM used as judge for faithfulness, context_precision, context_recall
-  judge_model: "gpt-4o-mini"
-  judge_temperature: 0.0
-  # output directory for reports
-  output_dir: "results"
-  report_formats: ["console", "csv", "json"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CUAD dataset  ← NEW
+# ─────────────────────────────────────────────────────────────────────────────
+cuad:
+  # Where to store the downloaded contracts after setup_cuad.py runs
+  contracts_dir: data/cuad_contracts/
+
+  # Path for the eval dataset produced from CUAD's QA annotations
+  eval_dataset_path: data/cuad_eval.json
+
+  # HuggingFace dataset split to use for building the eval set
+  # "train" has 410 contracts (80%); "test" has 100 contracts (20%)
+  split: test                          # use test split for eval to avoid leakage
+
+  # Max QA pairs per category to include in the eval set.
+  # CUAD has 41 categories × ~100 contracts = can be very large.
+  # Cap it so eval runs in reasonable time.
+  max_samples_per_category: 5         # → at most 41×5 = 205 eval pairs total
+
+  # Categories to include (null = all 41).
+  # Recommended subset for a focused thesis experiment:
+  categories:
+    - "Governing Law"
+    - "Termination For Convenience"
+    - "Anti-Assignment"
+    - "Cap On Liability"
+    - "Renewal Term"
+    - "Expiration Date"
+    - "Non-Compete"
+    - "License Grant"
+    - "Audit Rights"
+    - "Confidentiality"
