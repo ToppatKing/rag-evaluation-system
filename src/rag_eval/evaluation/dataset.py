@@ -95,13 +95,15 @@ class EvalDataset:
             Populated :class:`EvalDataset`.
         """
         path = Path(path)
-        raw: list[dict[str, object]] = json.loads(path.read_text())
+        raw: list[dict[str, object]] = json.loads(path.read_text(encoding="utf-8"))
         samples = [
             EvalSample(
-                query=str(item["query"]),
-                reference_answer=str(item.get("reference_answer", "")),
-                ground_truth_context=list(item.get("ground_truth_context", [])),
-                sample_id=str(item.get("sample_id", "")),
+                query=str(item.get("query") or item.get("question") or ""),
+                reference_answer=str(item.get("reference_answer") or item.get("answer") or ""),
+                ground_truth_context=list(
+                    item.get("ground_truth_context") or item.get("contexts") or item.get("context") or []
+                ),
+                sample_id=str(item.get("sample_id") or item.get("id") or ""),
                 metadata=dict(item.get("metadata", {})),  # type: ignore[arg-type]
             )
             for item in raw
@@ -113,9 +115,9 @@ class EvalDataset:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
-            json.dumps([s.to_dict() for s in self.samples], indent=2, ensure_ascii=False)
+            json.dumps([s.to_dict() for s in self.samples], indent=2, ensure_ascii=False),
+            encoding="utf-8",
         )
-
 
 def load_sample_dataset() -> EvalDataset:
     """Return a small built-in evaluation dataset for quick testing.

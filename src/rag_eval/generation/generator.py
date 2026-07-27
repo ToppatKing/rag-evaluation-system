@@ -9,8 +9,10 @@ plus a list of context strings, builds a structured prompt, and returns a
 :class:`GenerationResult`.
 """
 
+
 from __future__ import annotations
 
+import os
 import logging
 import time
 from abc import ABC, abstractmethod
@@ -131,15 +133,7 @@ class BaseGenerator(ABC):
 
 
 class OpenAIGenerator(BaseGenerator):
-    """OpenAI Chat Completions generator.
-
-    Args:
-        model: OpenAI model identifier (e.g. ``"gpt-4o-mini"``).
-        temperature: Sampling temperature.
-        max_tokens: Max completion tokens.
-        system_prompt: System role message.
-        api_key: Overrides ``OPENAI_API_KEY`` environment variable.
-    """
+    """OpenAI Chat Completions generator."""
 
     def __init__(
         self,
@@ -154,7 +148,13 @@ class OpenAIGenerator(BaseGenerator):
             from openai import OpenAI  # type: ignore[import-untyped]
         except ImportError as exc:
             raise ImportError("Install openai: pip install openai") from exc
-        self._client = OpenAI(api_key=api_key)
+
+        # Safely resolve API key: ignore placeholders or empty config strings
+        resolved_key = api_key
+        if not resolved_key or "..." in resolved_key or resolved_key == "sk-...":
+            resolved_key = os.getenv("OPENAI_API_KEY")
+
+        self._client = OpenAI(api_key=resolved_key)
 
     def generate(self, query: str, contexts: list[str]) -> GenerationResult:
         user_msg = self._build_user_message(query, contexts)
@@ -297,21 +297,12 @@ class AnthropicGenerator(BaseGenerator):
 
 
 def build_generator(config: dict[str, Any]) -> BaseGenerator:
-    """Construct a generator from configuration.
-
-    Args:
-        config: Must contain ``provider`` (``"openai"`` or ``"anthropic"``),
-            ``model``, ``temperature``, ``max_tokens``, and optionally
-            ``system_prompt``.
-
-    Returns:
-        Configured :class:`BaseGenerator`.
-    """
     provider = config.get("provider", "openai")
     model = str(config.get("model", ""))
     temperature = float(config.get("temperature", 0.1))
     max_tokens = int(config.get("max_tokens", 512))
     system_prompt = str(config.get("system_prompt", _DEFAULT_SYSTEM_PROMPT))
+    api_key = config.get("api_key")
 
     if provider == "openai":
         return OpenAIGenerator(
@@ -319,6 +310,7 @@ def build_generator(config: dict[str, Any]) -> BaseGenerator:
             temperature=temperature,
             max_tokens=max_tokens,
             system_prompt=system_prompt,
+            api_key=api_key,
         )
     if provider == "anthropic":
         return AnthropicGenerator(
@@ -326,5 +318,6 @@ def build_generator(config: dict[str, Any]) -> BaseGenerator:
             temperature=temperature,
             max_tokens=max_tokens,
             system_prompt=system_prompt,
+            api_key=api_key,
         )
     raise ValueError(f"Unknown generation provider: {provider!r}")

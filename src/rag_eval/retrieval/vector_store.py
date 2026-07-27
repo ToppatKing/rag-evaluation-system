@@ -206,7 +206,8 @@ class FAISSVectorStore:
             "chunks": [asdict(c) for c in self._chunks],
         }
         path.with_suffix(".json").write_text(
-            json.dumps(metadata, indent=2, ensure_ascii=False)
+            json.dumps(metadata, indent=2, ensure_ascii=False),
+            encoding="utf-8"
         )
         logger.info("Saved FAISS index (%d vectors) to %s", self.size, path)
 
@@ -223,7 +224,7 @@ class FAISSVectorStore:
         import faiss  # type: ignore[import-untyped]
 
         path = Path(path)
-        metadata = json.loads(path.with_suffix(".json").read_text())
+        metadata = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))
 
         store = cls(dimension=metadata["dimension"], metric=metadata["metric"])
         store._index = faiss.read_index(str(path.with_suffix(".faiss")))

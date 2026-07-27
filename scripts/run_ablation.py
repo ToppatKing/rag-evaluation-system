@@ -38,6 +38,9 @@ import logging
 import sys
 import time
 from pathlib import Path
+from rag_eval.evaluation.dataset import EvalDataset
+from rag_eval.evaluation.evaluator import RAGEvaluator
+from rag_eval.evaluation.metrics import build_metrics
  
 logging.basicConfig(
     level=logging.INFO,
@@ -81,41 +84,36 @@ def _load_pipeline(config: dict, method: str):
     from rag_eval.pipeline import RAGPipeline  # type: ignore
  
     cfg = dict(config)  # shallow copy
-    cfg["retrieval"] = dict(config["retrieval"])
+    cfg["retrieval"] = dict(config.get("retrieval", {}))
+    
+    # Override the retrieval method
     cfg["retrieval"]["method"] = method
  
+    # Pass the overridden dictionary, NOT a file path
     return RAGPipeline.from_config(cfg)
  
- 
-def _run_evaluation(pipeline, eval_samples: list[dict]) -> tuple[list[dict], dict]:
-    """Run the pipeline over all eval samples and return (per_query, aggregate).
- 
-    Each per-query result is a dict matching EvalSample + all metric scores.
-    """
-    per_query: list[dict] = []
- 
-    for i, sample in enumerate(eval_samples):
-        logger.debug(
-            "[%d/%d] Q: %.80s", i + 1, len(eval_samples), sample["question"]
-        )
-        t0 = time.perf_counter()
-        try:
-            result = pipeline.query_and_evaluate(sample)
-        except Exception as exc:
-            logger.warning("Sample %d failed: %s", i + 1, exc)
-            continue
-        result["latency_s"] = time.perf_counter() - t0
-        per_query.append(result)
- 
-    # Aggregate: mean of each numeric metric
-    aggregate: dict[str, float] = {}
-    for metric in REPORTED_METRICS:
-        values = [r[metric] for r in per_query if metric in r and r[metric] is not None]
-        aggregate[metric] = round(sum(values) / len(values), 4) if values else 0.0
- 
+def _run_evaluation(pipeline, dataset: EvalDataset, config: dict) -> tuple[list[dict], dict]:
+    """Run the evaluation using the official RAGEvaluator."""
+    eval_cfg = config.get("evaluation", {})
+
+    # Re-use pipeline's embedder for answer relevancy to avoid loading the model twice
+    metrics = build_metrics(eval_cfg, embedder=pipeline._embedder)
+    evaluator = RAGEvaluator(metrics, pipeline, verbose=False)
+
+    # Run the official evaluation framework
+    report = evaluator.evaluate(dataset)
+
+    # Extract the dictionaries from the report object
+    # (Checking standard property names: usually 'results' and 'aggregate')
+    per_query = getattr(report, "results", getattr(report, "samples", []))
+    aggregate = getattr(report, "aggregate", getattr(report, "metrics", {}))
+
+    # Safety conversion in case the report stores objects instead of raw dicts
+    if per_query and not isinstance(per_query[0], dict):
+        per_query = [vars(q) if hasattr(q, "__dict__") else q for q in per_query]
+
     aggregate["n_samples"] = len(per_query)
     return per_query, aggregate
- 
  
 def _format_table(results: dict[str, dict]) -> str:
     """Render a plain-text comparison table suitable for a thesis appendix."""
@@ -179,9 +177,8 @@ def main() -> None:
         )
         sys.exit(1)
  
-    with open(dataset_path, encoding="utf-8") as f:
-        eval_samples = json.load(f)
-    logger.info("Loaded %d eval samples from %s", len(eval_samples), dataset_path)
+    dataset = EvalDataset.from_json(dataset_path)
+    logger.info("Loaded %d eval samples from %s", len(dataset), dataset_path)
  
     # ── Run each method ────────────────────────────────────────────────
     all_results: dict[str, dict] = {}
@@ -192,7 +189,7 @@ def main() -> None:
         logger.info("=" * 60)
  
         pipeline = _load_pipeline(config, method)
-        per_query, aggregate = _run_evaluation(pipeline, eval_samples)
+        per_query, aggregate = _run_evaluation(pipeline, dataset, config)
  
         # Save per-query results
         per_query_path = output_dir / f"{method}_results.json"
@@ -226,7 +223,7 @@ def main() -> None:
         "  Latency S         mean end-to-end wall-clock time (seconds)\n"
         "  Token Efficiency  answer tokens / context tokens (conciseness)\n"
     )
-    report_path.write_text(report_content)
+    report_path.write_text(report_content, encoding="utf-8")
  
     logger.info("\n" + "=" * 60)
     logger.info("ABLATION COMPLETE")

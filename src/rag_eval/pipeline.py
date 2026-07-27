@@ -140,19 +140,31 @@ class RAGPipeline:
     # ── Factory ───────────────────────────────────────────────────────────────
 
     @classmethod
-    def from_config(cls, config_path: str | Path) -> "RAGPipeline":
-        """Construct a fully configured pipeline from a YAML file.
+    def from_config(cls, config_path: str | Path | dict) -> "RAGPipeline":
+        """Construct a fully configured pipeline from a YAML file or a dictionary.
 
         If a FAISS index exists at the configured path, it is loaded
         automatically; otherwise an empty store is created.
 
         Args:
-            config_path: Path to ``config.yaml``.
+            config_path: Path to ``config.yaml``, or a pre-loaded configuration dict.
 
         Returns:
             Configured :class:`RAGPipeline`.
         """
-        cfg = PipelineConfig.from_yaml(config_path)
+        # Accept either a dictionary (for ablation overrides) or a file path
+        if isinstance(config_path, dict):
+            cfg = PipelineConfig(
+                chunking=config_path.get("chunking", {}),
+                embedding=config_path.get("embedding", {}),
+                vector_store=config_path.get("vector_store", {}),
+                retrieval=config_path.get("retrieval", {}),
+                generation=config_path.get("generation", {}),
+                evaluation=config_path.get("evaluation", {}),
+                ingestion=config_path.get("ingestion", {})
+            )
+        else:
+            cfg = PipelineConfig.from_yaml(config_path)
 
         embedder = build_embedder(cfg.embedding)
         chunker = build_chunker(cfg.chunking)
@@ -168,11 +180,22 @@ class RAGPipeline:
             logger.info("Creating new FAISS index (dim=%d)", embedder.dimension)
             store = FAISSVectorStore(dimension=embedder.dimension, metric=metric)
 
-        retriever = build_retriever(cfg.retrieval, store, embedder)
+        # Build generator FIRST so it can be passed to HyDE
         generator = build_generator(cfg.generation)
+        
+        # Extract the method string and remove it from the kwargs dictionary
+        retriever_method = cfg.retrieval.get("method", "dense")
+        retrieval_kwargs = {k: v for k, v in cfg.retrieval.items() if k != "method"}
+        
+        retriever = build_retriever(
+            method=retriever_method, 
+            vector_store=store, 
+            embedder=embedder, 
+            generator=generator,
+            **retrieval_kwargs
+        )
 
         return cls(embedder, chunker, store, retriever, generator, cfg)
-
     # ── Ingestion ─────────────────────────────────────────────────────────────
 
     def ingest_directory(self, directory: str | Path, *, save: bool = True) -> int:
@@ -269,10 +292,24 @@ class RAGPipeline:
         """
         t0 = time.perf_counter()
 
-        retrieval_results = self._retriever.retrieve(question)
-        contexts = [r.text for r in retrieval_results]
-        sources = [r.source for r in retrieval_results]
+        # 1. Retrieve raw results (which might be objects or (item, score) tuples)
+        raw_results = self._retriever.retrieve(question)
 
+        # 2. Normalize them so we always have the underlying chunk/item object
+        retrieval_results = []
+        for r in raw_results:
+            item = r[0] if isinstance(r, tuple) else r
+            retrieval_results.append(item)
+
+        # 3. Safely extract text and source attributes
+        contexts = [
+            getattr(item, "text", item.get("text", str(item))) if hasattr(item, "get") else getattr(item, "text", str(item))
+            for item in retrieval_results
+        ]
+        sources = [
+            getattr(item, "source", item.get("source", "unknown")) if hasattr(item, "get") else getattr(item, "source", "unknown")
+            for item in retrieval_results
+        ]
         if not contexts:
             logger.warning("No contexts retrieved for query: %s", question)
             return RAGResponse(

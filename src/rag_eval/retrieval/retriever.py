@@ -83,7 +83,7 @@ class DenseRetriever(BaseRetriever):
         return "dense"
 
     def retrieve(self, query: str) -> list[RetrievedChunk]:
-        query_vec = self.embedder.embed([query])[0]
+        query_vec = self.embedder.embed_query(query)
         return self.vector_store.search(query_vec, top_k=self.top_k)
 
 
@@ -117,7 +117,7 @@ class MMRRetriever(BaseRetriever):
         return "mmr"
 
     def retrieve(self, query: str) -> list[RetrievedChunk]:
-        query_vec = self.embedder.embed([query])[0]
+        query_vec = self.embedder.embed_query(query)
         candidates = self.vector_store.search(query_vec, top_k=self.fetch_k)
         return self._mmr_rerank(query_vec, candidates)
 
@@ -294,7 +294,7 @@ class HyDERetriever(BaseRetriever):
                 "HyDE: all hypothetical-doc generations failed; "
                 "falling back to dense retrieval for this query."
             )
-            query_vec = self.embedder.embed([query])[0]
+            query_vec = self.embedder.embed_query(query)
             return self.vector_store.search(query_vec, top_k=self.top_k)
 
         # ── Step 2: embed each hypothetical doc and average ────────────
