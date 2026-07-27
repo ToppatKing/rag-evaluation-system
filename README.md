@@ -258,7 +258,11 @@ class ExactMatchMetric(BaseMetric):
 
 
 ---
+## 💡 Troubleshooting & API Notes
 
+* **OpenAI Account Balance:** Ensure your OpenAI account has active prepaid credits. Brand-new accounts with a $0 balance will trigger an `insufficient_quota` (429) error.
+* **API Key Management:** Always set your full, unmasked secret key via environment variables (`OPENAI_API_KEY`). Avoid leaving placeholder strings (like `sk-...`) in your configuration files.
+* **HyDE Token Consumption:** When running the ablation script with HyDE enabled, keep in mind that it makes an extra LLM generation call for every single query prior to retrieval, which consumes additional API tokens and budget.
 ## License
 
 MIT — see [LICENSE](LICENSE).
