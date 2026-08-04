@@ -12,6 +12,7 @@ plus a list of context strings, builds a structured prompt, and returns a
 
 from __future__ import annotations
 
+import google.generativeai as genai
 import os
 import logging
 import time
@@ -126,13 +127,24 @@ class BaseGenerator(ABC):
             The generated hypothetical passage.
         """
  
- 
+class GeminiGenerator(BaseGenerator):
+    """
+    Free text generation using Gemini 1.5 Flash.
+    """
+
+    def __init__(self, model_name="gemini-1.5-flash"):
+        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+        self.model = genai.GenerativeModel(model_name)
+
+    def generate(self, prompt: str) -> str:
+        response = self.model.generate_content(prompt)
+        return response.text 
 
 
 # ── OpenAI ────────────────────────────────────────────────────────────────────
 
 
-class OpenAIGenerator(BaseGenerator):
+class OpenAIGenerator:
     """OpenAI Chat Completions generator."""
 
     def __init__(
