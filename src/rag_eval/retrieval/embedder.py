@@ -15,7 +15,9 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
+import google.generativeai as genai
 import numpy as np
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +117,6 @@ class SentenceTransformerEmbedder(BaseEmbedder):
         return self.embed_documents([query])[0]
 
 # ── Gemini backend ────────────────────────────────────────────────────────────
-import google.generativeai as genai
 
 class GeminiEmbedder(BaseEmbedder):
     """
@@ -154,7 +155,6 @@ class GeminiEmbedder(BaseEmbedder):
         if self._normalize:
             vec /= np.linalg.norm(vec)
         return vec
-
 
 # ── OpenAI backend ────────────────────────────────────────────────────────────
 
