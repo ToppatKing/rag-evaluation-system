@@ -10,6 +10,10 @@ Usage example::
 
 from __future__ import annotations
 
+import google.generativeai as genai
+import os
+
+
 import json
 import logging
 import time
@@ -27,6 +31,38 @@ from rag_eval.evaluation.metrics import BaseMetric, MetricResult
 logger = logging.getLogger(__name__)
 _console = Console()
 
+import re
+
+def extract_score(text: str) -> float:
+    """
+    Extract a float score (0–1) from Gemini judge output.
+    Falls back to 0.0 if no score is found.
+    """
+    match = re.search(r"([01](?:\.\d+)?)", text)
+    return float(match.group(1)) if match else 0.0
+
+
+class GeminiJudge:
+    """
+    LLM-as-judge using Gemini 1.5 Flash (free).
+    """
+
+    def __init__(self, model_name="gemini-1.5-flash"):
+        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+        self.model = genai.GenerativeModel(model_name)
+
+    def judge(self, question: str, answer: str, context: str) -> str:
+        prompt = f"""
+You are an evaluation judge.
+Question: {question}
+Answer: {answer}
+Context: {context}
+
+Evaluate correctness, faithfulness, and relevance.
+Respond with a score from 0 to 1 and a short explanation.
+"""
+        response = self.model.generate_content(prompt)
+        return response.text
 
 # ── Per-query result ──────────────────────────────────────────────────────────
 
@@ -250,7 +286,22 @@ class RAGEvaluator:
 
             response = self._pipeline.query(sample.query)
             metric_results: dict[str, MetricResult] = {}
-
+            # Run Gemini judge
+            judge = GeminiJudge()
+            judge_output = judge.judge(
+                sample.query,
+                response.answer,
+                "\n\n".join(response.contexts)
+            )
+            
+            # Parse score from Gemini output
+            score = extract_score(judge_output)
+            
+            metric_results["gemini_judge"] = MetricResult(
+                name="gemini_judge",
+                score=score,
+                error=None
+            )
             for metric in self._metrics:
                 try:
                     result = metric.compute(sample, response)
@@ -279,8 +330,6 @@ class RAGEvaluator:
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
-
 def _make_bar(score: float, width: int = 10) -> str:
     """Return a Unicode progress bar string for *score* ∈ [0, 1]."""
     filled = round(score * width)
