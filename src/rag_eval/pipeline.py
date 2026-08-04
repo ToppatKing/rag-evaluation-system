@@ -59,6 +59,8 @@ class RAGResponse:
     sources: list[str]
     latency_s: float = 0.0
     generation_result: GenerationResult | None = None
+    retrieval_breakdown: dict[str, list[str]] = field(default_factory=dict)
+    retrieval_comparison: str = ""
 
     def __repr__(self) -> str:
         preview = self.answer[:80].replace("\n", " ")
@@ -318,7 +320,18 @@ class RAGPipeline:
                 contexts=[],
                 sources=[],
                 latency_s=time.perf_counter() - t0,
+                retrieval_breakdown={},
+                retrieval_comparison="",
             )
+
+        breakdown: dict[str, list[str]] = {}
+        comparison = ""
+        if hasattr(self._retriever, "last_breakdown"):
+            breakdown = {
+                name: [self._serialize_chunk(chunk) for chunk in chunks]
+                for name, chunks in getattr(self._retriever, "last_breakdown", {}).items()
+            }
+            comparison = getattr(self._retriever, "last_comparison_summary", "")
 
         gen_result = self._generator.generate(question, contexts)
         total_latency = time.perf_counter() - t0
@@ -331,7 +344,18 @@ class RAGPipeline:
             sources=sources,
             latency_s=total_latency,
             generation_result=gen_result,
+            retrieval_breakdown=breakdown,
+            retrieval_comparison=comparison,
         )
+
+    def _serialize_chunk(self, chunk: Any) -> str:
+        if chunk is None:
+            return ""
+        if hasattr(chunk, "text"):
+            return str(getattr(chunk, "text"))
+        if isinstance(chunk, dict):
+            return str(chunk.get("text", ""))
+        return str(chunk)
 
     # ── Persistence ───────────────────────────────────────────────────────────
 

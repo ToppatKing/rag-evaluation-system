@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from rag_eval.evaluation.dataset import EvalSample
+from rag_eval.evaluation import metrics as metrics_module
 from rag_eval.evaluation.metrics import (
     LatencyMetric,
     RougeLMetric,
@@ -19,9 +20,11 @@ def _make_response(
     contexts: list[str] | None = None,
     latency_s: float = 1.0,
 ) -> SimpleNamespace:
+    if contexts is None:
+        contexts = ["Some context text about machine learning."]
     return SimpleNamespace(
         answer=answer,
-        contexts=contexts or ["Some context text about machine learning."],
+        contexts=contexts,
         latency_s=latency_s,
     )
 
@@ -166,3 +169,40 @@ class TestMetricResult:
 
         r = MetricResult(name="test", score=0.0, error="Something broke")
         assert r.ok is False
+
+
+def test_build_metrics_uses_configured_judge_provider(monkeypatch):
+    captured = {}
+
+    class _FakeJudge:
+        def __init__(self, model, temperature=0.0, provider="gemini") -> None:
+            captured["provider"] = provider
+            self._provider = provider
+
+    monkeypatch.setattr(metrics_module, "_LLMJudge", _FakeJudge)
+
+    metrics = metrics_module.build_metrics(
+        {"metrics": ["context_precision"], "judge_provider": "gemini", "judge_model": "gemini-1.5-flash"},
+        embedder=None,
+    )
+
+    assert len(metrics) == 1
+    assert captured["provider"] == "gemini"
+
+
+def test_llm_judge_returns_deterministic_fallback_when_provider_errors(monkeypatch):
+    class _BrokenClient:
+        class models:
+            @staticmethod
+            def generate_content(*args, **kwargs):
+                raise RuntimeError("quota exceeded")
+
+    class _BrokenGeminiClient:
+        def __init__(self, *args, **kwargs):
+            self.models = _BrokenClient.models
+
+    monkeypatch.setattr(metrics_module, "_lazy_gemini_client", lambda: _BrokenGeminiClient)
+
+    judge = metrics_module._LLMJudge(model="gemini-2.0-flash", provider="gemini")
+    assert judge._call("system", "user") == "0.0"
+    assert judge.score_0_to_1("prompt") == 0.0

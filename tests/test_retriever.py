@@ -8,6 +8,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from rag_eval.retrieval.retriever import (
+    DenseRetriever,
+    EnsembleRetriever,
+    HyDERetriever,
+    MMRRetriever,
+)
 from rag_eval.retrieval.vector_store import FAISSVectorStore, StoredChunk
 
 
@@ -25,6 +31,22 @@ def small_store(stored_chunks) -> FAISSVectorStore:
     vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
     store.add(vecs, stored_chunks)
     return store
+
+
+class _FakeEmbedder:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def embed_query(self, query: str) -> np.ndarray:
+        return np.array([1.0, 0.0], dtype=np.float32)
+
+    def embed(self, texts: list[str]) -> np.ndarray:
+        self.calls.append(texts)
+        return np.array([[1.0, 0.0] for _ in texts], dtype=np.float32)
+
+    def embed_documents(self, texts: list[str]) -> np.ndarray:
+        self.calls.append(texts)
+        return np.array([[1.0, 0.0] for _ in texts], dtype=np.float32)
 
 
 class TestFAISSVectorStore:
@@ -118,3 +140,48 @@ class TestFAISSVectorStore:
     def test_invalid_metric_raises(self) -> None:
         with pytest.raises(ValueError, match="Unsupported metric"):
             FAISSVectorStore(dimension=4, metric="dot")
+
+    def test_mmr_retriever_handles_tuple_candidates(self) -> None:
+        store = FAISSVectorStore(dimension=2)
+        chunks = [
+            StoredChunk(text="one", source="a"),
+            StoredChunk(text="two", source="b"),
+        ]
+        store.add(np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32), chunks)
+
+        retriever = MMRRetriever(store, _FakeEmbedder(), top_k=1, fetch_k=2, mmr_lambda=0.5)
+        results = retriever.retrieve("hello")
+
+        assert len(results) == 1
+        assert results[0].text in {"one", "two"}
+
+    def test_ensemble_retriever_runs_all_strategies_and_builds_comparison(self) -> None:
+        store = FAISSVectorStore(dimension=2)
+        chunks = [
+            StoredChunk(text="one", source="a"),
+            StoredChunk(text="two", source="b"),
+        ]
+        store.add(np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32), chunks)
+
+        class _FakeGenerator:
+            def generate_hypothetical_doc(self, query: str, instruction: str) -> str:
+                return f"hypothesis for {query}"
+
+        retriever = EnsembleRetriever(
+            [
+                DenseRetriever(store, _FakeEmbedder(), top_k=1),
+                MMRRetriever(store, _FakeEmbedder(), top_k=1, fetch_k=2, mmr_lambda=0.5),
+                HyDERetriever(store, _FakeEmbedder(), _FakeGenerator(), top_k=1),
+            ],
+            top_k=2,
+        )
+
+        results = retriever.retrieve("hello")
+
+        assert len(results) >= 1
+        assert retriever.last_breakdown["dense"]
+        assert retriever.last_breakdown["mmr"]
+        assert retriever.last_breakdown["hyde"]
+        assert "dense" in retriever.last_comparison_summary.lower()
+        assert "mmr" in retriever.last_comparison_summary.lower()
+        assert "hyde" in retriever.last_comparison_summary.lower()

@@ -25,9 +25,9 @@ def remove_boilerplate(text: str) -> str:
     """Remove common document boilerplate (page numbers, headers, footers).
 
     Heuristic: strip lines that are:
-    - Pure numeric (page numbers)
-    - Very short (< 4 chars) and isolated
-    - Match common header/footer patterns
+    - pure numeric page markers
+    - short non-sentence footer/header lines
+    - explicit signature/footer markers
     """
     lines = text.splitlines()
     cleaned: list[str] = []
@@ -39,9 +39,11 @@ def remove_boilerplate(text: str) -> str:
         # Lone page numbers
         if re.fullmatch(r"\d{1,4}", stripped):
             continue
-        # Common footer patterns
-        if re.search(
-            r"(confidential|all rights reserved|©|\bpage\b\s*\d)", stripped, re.I
+        # Short footer/header lines only
+        if len(stripped) <= 80 and re.search(
+            r"^(?:page\s*\d+(?:\s*of\s*\d+)?|all rights reserved|©|\*{3,}|\[\*{3}\].*|signature page|confidential(?: information)?)[\s.:-]*$",
+            stripped,
+            re.I,
         ):
             continue
         cleaned.append(line)
@@ -64,6 +66,9 @@ def clean_text(text: str, *, remove_boilerplate_: bool = True) -> str:
     Returns:
         Cleaned text string.
     """
+    normalized = normalize_whitespace(text)
     if remove_boilerplate_:
-        text = remove_boilerplate(text)
-    return normalize_whitespace(text)
+        cleaned = normalize_whitespace(remove_boilerplate(normalized))
+        if cleaned.strip():
+            return cleaned
+    return normalized

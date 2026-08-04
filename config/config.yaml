@@ -17,10 +17,8 @@ chunking:
 # ── Embedding ─────────────────────────────────────────────────────────────────
 embedding:
   provider: gemini
-  model: models/embedding-001
+  model: embedding-001
 
-  # openai backend
-  # model_name: "text-embedding-3-small"
   batch_size: 64
   normalize: true
 
@@ -32,7 +30,7 @@ vector_store:
 # ── Retrieval ─────────────────────────────────────────────────────────────────
 retrieval:
   top_k: 5
-  method: "mmr"             # dense | mmr | hyde
+  method: "ensemble"        # dense | mmr | hyde | ensemble
   # MMR: trade-off between relevance (1.0) and diversity (0.0)
   mmr_lambda: 0.6
   # fetch_k candidates before MMR re-ranking

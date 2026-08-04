@@ -20,6 +20,8 @@ All metrics share the :class:`BaseMetric` interface:
 
 from __future__ import annotations
 
+import logging
+import os
 import re
 import time
 from abc import ABC, abstractmethod
@@ -27,6 +29,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 # ── Result dataclass ──────────────────────────────────────────────────────────
@@ -64,6 +68,14 @@ def _lazy_openai():  # type: ignore[no-untyped-def]
         raise ImportError("Install openai: pip install openai") from exc
 
 
+def _lazy_gemini_client():  # type: ignore[no-untyped-def]
+    try:
+        from google import genai  # type: ignore[import-untyped]
+        return genai.Client
+    except ImportError as exc:
+        raise ImportError("Install google-genai: pip install google-genai") from exc
+
+
 # ── Abstract base ─────────────────────────────────────────────────────────────
 
 
@@ -96,23 +108,79 @@ class BaseMetric(ABC):
 
 
 class _LLMJudge:
-    """Lightweight wrapper for LLM-as-judge calls (OpenAI only)."""
+    """Lightweight wrapper for LLM-as-judge calls.
 
-    def __init__(self, model: str = "gpt-4o-mini", temperature: float = 0.0) -> None:
+    Uses Gemini by default when available, with an OpenAI fallback for explicit
+    OpenAI-backed setups.
+    """
+
+    def __init__(
+        self,
+        model: str = "gpt-4o-mini",
+        temperature: float = 0.0,
+        provider: str = "gemini",
+    ) -> None:
         self._model = model
         self._temperature = temperature
-        self._client = _lazy_openai()()
+        self._provider = provider.lower()
+        self._client: Any = None
+
+        if self._provider == "gemini":
+            try:
+                client_cls = _lazy_gemini_client()
+                self._client = client_cls(
+                    api_key=os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+                )
+            except Exception as exc:  # pragma: no cover - runtime fallback
+                logger.warning("Gemini judge unavailable (%s); using deterministic fallback", exc)
+                self._client = None
+                self._provider = "fallback"
+        if self._provider == "openai":
+            try:
+                self._client = _lazy_openai()()
+            except Exception as exc:  # pragma: no cover - runtime fallback
+                logger.warning("OpenAI judge unavailable (%s); using deterministic fallback", exc)
+                self._client = None
+                self._provider = "fallback"
 
     def _call(self, system: str, user: str) -> str:
-        resp = self._client.chat.completions.create(
-            model=self._model,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            temperature=self._temperature,
-            max_tokens=256,
-        )
+        if self._provider == "fallback":
+            return "0.0"
+
+        if self._provider == "gemini":
+            if self._client is None:
+                return "0.0"
+            last_exc: Exception | None = None
+            fallback_models = ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash"]
+            candidates = [self._model] + [model for model in fallback_models if model != self._model]
+            for model_name in candidates:
+                try:
+                    response = self._client.models.generate_content(
+                        model=model_name,
+                        contents=f"{system}\n\n{user}",
+                    )
+                    return (getattr(response, "text", None) or "").strip()
+                except Exception as exc:  # pragma: no cover - runtime fallback
+                    last_exc = exc
+                    logger.debug("Gemini judge model %s failed: %s", model_name, exc)
+            if last_exc is not None:
+                logger.info("Gemini judge unavailable (%s); using deterministic fallback", last_exc)
+                return "0.0"
+            return "0.0"
+
+        try:
+            resp = self._client.chat.completions.create(
+                model=self._model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                temperature=self._temperature,
+                max_tokens=256,
+            )
+        except Exception as exc:  # pragma: no cover - runtime fallback
+            logger.info("OpenAI judge unavailable (%s); using deterministic fallback", exc)
+            return "0.0"
         return (resp.choices[0].message.content or "").strip()
 
     def score_0_to_1(self, prompt: str) -> float:
@@ -130,6 +198,9 @@ class _LLMJudge:
     def score_list(self, prompts: list[str]) -> list[float]:
         return [self.score_0_to_1(p) for p in prompts]
 
+    def is_available(self) -> bool:
+        return self._provider != "fallback"
+
 
 # ── 1. Faithfulness ───────────────────────────────────────────────────────────
 
@@ -146,15 +217,21 @@ class FaithfulnessMetric(BaseMetric):
     """
 
     def __init__(
-        self, judge_model: str = "gpt-4o-mini", judge_temperature: float = 0.0
+        self,
+        judge_model: str = "gpt-4o-mini",
+        judge_temperature: float = 0.0,
+        provider: str = "gemini",
     ) -> None:
-        self._judge = _LLMJudge(judge_model, judge_temperature)
+        self._judge = _LLMJudge(judge_model, judge_temperature, provider=provider)
 
     @property
     def name(self) -> str:
         return "faithfulness"
 
     def compute(self, sample: Any, response: Any) -> MetricResult:
+        if not self._judge.is_available():
+            return MetricResult(name=self.name, score=0.0, error="Judge unavailable")
+
         context = "\n\n".join(response.contexts)
         answer = response.answer
 
@@ -251,14 +328,17 @@ class ContextPrecisionMetric(BaseMetric):
         judge_model: OpenAI model used as judge.
     """
 
-    def __init__(self, judge_model: str = "gpt-4o-mini") -> None:
-        self._judge = _LLMJudge(judge_model)
+    def __init__(self, judge_model: str = "gpt-4o-mini", provider: str = "gemini") -> None:
+        self._judge = _LLMJudge(judge_model, provider=provider)
 
     @property
     def name(self) -> str:
         return "context_precision"
 
     def compute(self, sample: Any, response: Any) -> MetricResult:
+        if not self._judge.is_available():
+            return MetricResult(name=self.name, score=0.0, error="Judge unavailable")
+
         contexts = response.contexts
         if not contexts:
             return MetricResult(name=self.name, score=0.0, error="No contexts")
@@ -291,14 +371,17 @@ class ContextRecallMetric(BaseMetric):
         judge_model: OpenAI model used as judge.
     """
 
-    def __init__(self, judge_model: str = "gpt-4o-mini") -> None:
-        self._judge = _LLMJudge(judge_model)
+    def __init__(self, judge_model: str = "gpt-4o-mini", provider: str = "gemini") -> None:
+        self._judge = _LLMJudge(judge_model, provider=provider)
 
     @property
     def name(self) -> str:
         return "context_recall"
 
     def compute(self, sample: Any, response: Any) -> MetricResult:
+        if not self._judge.is_available():
+            return MetricResult(name=self.name, score=0.0, error="Judge unavailable")
+
         if not sample.reference_answer:
             return MetricResult(
                 name=self.name, score=0.0, error="No reference answer provided"
@@ -421,13 +504,24 @@ def build_metrics(
         List of configured :class:`BaseMetric` instances.
     """
     requested: list[str] = list(config.get("metrics", []))
-    judge_model = str(config.get("judge_model", "gpt-4o-mini"))
+    judge_model = str(config.get("judge_model", "gemini-1.5-flash"))
+    judge_provider = str(config.get("judge_provider", "gemini")).lower()
 
     mapping: dict[str, Any] = {
-        "faithfulness": lambda: FaithfulnessMetric(judge_model=judge_model),
+        "faithfulness": lambda: FaithfulnessMetric(
+            judge_model=judge_model,
+            judge_temperature=float(config.get("judge_temperature", 0.0)),
+            provider=judge_provider,
+        ),
         "answer_relevancy": lambda: AnswerRelevancyMetric(embedder),
-        "context_precision": lambda: ContextPrecisionMetric(judge_model=judge_model),
-        "context_recall": lambda: ContextRecallMetric(judge_model=judge_model),
+        "context_precision": lambda: ContextPrecisionMetric(
+            judge_model=judge_model,
+            provider=judge_provider,
+        ),
+        "context_recall": lambda: ContextRecallMetric(
+            judge_model=judge_model,
+            provider=judge_provider,
+        ),
         "rouge_l": RougeLMetric,
         "latency": LatencyMetric,
         "token_efficiency": TokenEfficiencyMetric,

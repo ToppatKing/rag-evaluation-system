@@ -15,6 +15,7 @@ from __future__ import annotations
 import google.generativeai as genai
 import os
 import logging
+import re
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -126,19 +127,156 @@ class BaseGenerator(ABC):
         str
             The generated hypothetical passage.
         """
+
+
+class LocalGenerator(BaseGenerator):
+    """Simple local fallback generator using retrieved context text."""
+
+    def __init__(
+        self,
+        model: str = "local",
+        temperature: float = 0.1,
+        max_tokens: int = 512,
+        system_prompt: str = _DEFAULT_SYSTEM_PROMPT,
+    ) -> None:
+        super().__init__(model, temperature, max_tokens, system_prompt)
+
+    def generate(self, query: str, contexts: list[str]) -> GenerationResult:
+        t0 = time.perf_counter()
+        answer = self._extract_answer(query, contexts)
+        latency = time.perf_counter() - t0
+        return GenerationResult(
+            answer=answer,
+            query=query,
+            contexts=contexts,
+            model=self.model,
+            latency_s=latency,
+        )
+
+    def generate_hypothetical_doc(self, query: str, instruction: str) -> str:
+        return f"This passage answers the question: {query}"
+
+    def _extract_answer(self, query: str, contexts: list[str]) -> str:
+        if not contexts:
+            return "I could not generate an answer because no context was retrieved."
+
+        words = [w.lower().strip(".,!?()[]{}\"'`)" ) for w in query.split() if len(w) > 2]
+        query_terms = set(words)
+
+        def score(context: str) -> int:
+            lower = context.lower()
+            return sum(1 for term in query_terms if term in lower)
+
+        best_context = max(contexts, key=score, default=contexts[0])
+        sentences = re.split(r"(?<=[.!?])\s+", best_context.strip())
+        if not sentences:
+            return best_context.strip()
+
+        best_sentence = max(
+            sentences,
+            key=lambda s: sum(1 for term in query_terms if term in s.lower()),
+        )
+        if best_sentence.strip():
+            return best_sentence.strip()
+        return sentences[0].strip()
  
 class GeminiGenerator(BaseGenerator):
-    """
-    Free text generation using Gemini 1.5 Flash.
-    """
+    _FALLBACK_MODELS = ("gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash")
 
-    def __init__(self, model_name="gemini-1.5-flash"):
-        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-        self.model = genai.GenerativeModel(model_name)
+    def __init__(
+        self,
+        model_name: str = "gemini-1.5-flash",
+        temperature: float = 0.0,
+        max_tokens: int = 512,
+        system_prompt: str = "",
+    ):
+        super().__init__(model_name, temperature, max_tokens, system_prompt)
+        self._model_name = model_name
+        self._temperature = temperature
+        self._max_tokens = max_tokens
+        self._system_prompt = system_prompt
 
-    def generate(self, prompt: str) -> str:
-        response = self.model.generate_content(prompt)
-        return response.text 
+        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        if api_key:
+            genai.configure(api_key=api_key)
+
+    def _call_model(self, *, contents: list[dict[str, str]], temperature: float, max_output_tokens: int):
+        last_exc: Exception | None = None
+        candidates = [self._model_name] + [model for model in self._FALLBACK_MODELS if model != self._model_name]
+        for candidate in candidates:
+            try:
+                return genai.GenerativeModel(candidate).generate_content(
+                    contents=contents,
+                    generation_config={
+                        "temperature": temperature,
+                        "max_output_tokens": max_output_tokens,
+                    },
+                )
+            except Exception as exc:  # pragma: no cover - runtime fallback
+                last_exc = exc
+                logger.debug("Gemini model %s failed: %s", candidate, exc)
+        if last_exc is not None:
+            raise last_exc
+        raise RuntimeError("No Gemini models available")
+
+    def generate(self, query: str, contexts: list[str]) -> GenerationResult:
+        user_msg = self._build_user_message(query, contexts)
+        t0 = time.perf_counter()
+        try:
+            response = self._call_model(
+                contents=[{"text": f"{self.system_prompt}\n\n{user_msg}"}],
+                temperature=self.temperature,
+                max_output_tokens=self.max_tokens,
+            )
+            answer = getattr(response, "text", "") or ""
+        except Exception as exc:  # pragma: no cover - runtime fallback
+            logger.info("Gemini generation unavailable (%s); using fallback answer", exc)
+            answer = (
+                "I could not generate an answer because the configured Gemini API "
+                "is not available."
+            )
+        latency = time.perf_counter() - t0
+        if answer.startswith("I could not generate an answer because"):
+            local = LocalGenerator(
+                model="local",
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                system_prompt=self.system_prompt,
+            )
+            return local.generate(query, contexts)
+        return GenerationResult(
+            answer=answer,
+            query=query,
+            contexts=contexts,
+            model=self.model,
+            latency_s=latency,
+        )
+
+    def generate_hypothetical_doc(self, query: str, instruction: str) -> str:
+        prompt = (
+            f"{instruction}\n\n"
+            f"Question: {query}\n\n"
+            "Passage:"
+        )
+        try:
+            response = self._call_model(
+                contents=[{"text": prompt}],
+                temperature=0.7,
+                max_output_tokens=256,
+            )
+            result = getattr(response, "text", "") or ""
+            if not result.strip():
+                raise RuntimeError("Empty Gemini hypothetical document")
+            return result
+        except Exception as exc:  # pragma: no cover - runtime fallback
+            logger.info("Gemini hypothetical-doc generation unavailable (%s); using local fallback", exc)
+            local = LocalGenerator(
+                model="local",
+                temperature=self.temperature,
+                max_tokens=256,
+                system_prompt=self.system_prompt,
+            )
+            return local.generate_hypothetical_doc(query, instruction)
 
 
 # ── OpenAI ────────────────────────────────────────────────────────────────────
@@ -317,26 +455,82 @@ def build_generator(config: dict[str, Any]) -> BaseGenerator:
     api_key = config.get("api_key")
 
     if provider == "openai":
-        return OpenAIGenerator(
-            model=model or "gpt-4o-mini",
-            temperature=temperature,
-            max_tokens=max_tokens,
-            system_prompt=system_prompt,
-            api_key=api_key,
-        )
+        try:
+            return OpenAIGenerator(
+                model=model or "gpt-4o-mini",
+                temperature=temperature,
+                max_tokens=max_tokens,
+                system_prompt=system_prompt,
+                api_key=api_key,
+            )
+        except Exception as exc:
+            logger.warning(
+                "OpenAI generator unavailable (%s); falling back to local generator.",
+                exc,
+            )
+            return LocalGenerator(
+                model="local",
+                temperature=temperature,
+                max_tokens=max_tokens,
+                system_prompt=system_prompt,
+            )
 
     if provider == "anthropic":
-        return AnthropicGenerator(
-            model=model or "claude-haiku-4-5-20251001",
-            temperature=temperature,
-            max_tokens=max_tokens,
-            system_prompt=system_prompt,
-            api_key=api_key,
-        )
+        try:
+            return AnthropicGenerator(
+                model=model or "claude-haiku-4-5-20251001",
+                temperature=temperature,
+                max_tokens=max_tokens,
+                system_prompt=system_prompt,
+                api_key=api_key,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Anthropic generator unavailable (%s); falling back to local generator.",
+                exc,
+            )
+            return LocalGenerator(
+                model="local",
+                temperature=temperature,
+                max_tokens=max_tokens,
+                system_prompt=system_prompt,
+            )
 
     if provider == "gemini":
-        return GeminiGenerator(
-            model_name=model,
+        api_key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        if not api_key:
+            logger.warning(
+                "No Gemini API key found; using local generator fallback instead of Gemini."
+            )
+            return LocalGenerator(
+                model="local",
+                temperature=temperature,
+                max_tokens=max_tokens,
+                system_prompt=system_prompt,
+            )
+
+        try:
+            return GeminiGenerator(
+                model_name=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                system_prompt=system_prompt,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Gemini generator unavailable (%s); falling back to local generator.",
+                exc,
+            )
+            return LocalGenerator(
+                model="local",
+                temperature=temperature,
+                max_tokens=max_tokens,
+                system_prompt=system_prompt,
+            )
+
+    if provider in {"local", "sentence_transformer", "sentence-transformer"}:
+        return LocalGenerator(
+            model="local",
             temperature=temperature,
             max_tokens=max_tokens,
             system_prompt=system_prompt,

@@ -73,6 +73,27 @@ def _load_config(path: str) -> dict:
         return yaml.safe_load(f)
  
  
+def _resolve_dataset_path(config: dict, config_dir: Path | None = None) -> Path | None:
+    """Resolve the evaluation dataset path from config, supporting both layouts."""
+    dataset_path = None
+    evaluation_cfg = config.get("evaluation", {})
+    if isinstance(evaluation_cfg, dict):
+        dataset_path = evaluation_cfg.get("eval_dataset") or evaluation_cfg.get("eval_dataset_path")
+
+    if not dataset_path:
+        cuad_cfg = config.get("cuad", {})
+        if isinstance(cuad_cfg, dict):
+            dataset_path = cuad_cfg.get("eval_dataset_path")
+
+    if not dataset_path:
+        return None
+
+    path = Path(dataset_path)
+    if not path.is_absolute() and config_dir is not None:
+        path = config_dir / path
+    return path
+
+
 def _load_pipeline(config: dict, method: str):
     """Instantiate a RAGPipeline with the requested retrieval method.
  
@@ -164,12 +185,15 @@ def main() -> None:
     args = parser.parse_args()
  
     config = _load_config(args.config)
+    config_path = Path(args.config).resolve()
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
  
     # Load eval dataset
-    dataset_path = args.dataset or config.get("evaluation", {}).get("eval_dataset")
-    if not dataset_path or not Path(dataset_path).exists():
+    dataset_path = args.dataset
+    if dataset_path is None:
+        dataset_path = _resolve_dataset_path(config, config_dir=config_path.parent)
+    if dataset_path is None or not Path(dataset_path).exists():
         logger.error(
             "Eval dataset not found at '%s'.  "
             "Run setup_cuad.py first, or set evaluation.eval_dataset in config.",
@@ -177,7 +201,7 @@ def main() -> None:
         )
         sys.exit(1)
  
-    dataset = EvalDataset.from_json(dataset_path)
+    dataset = EvalDataset.from_json(str(dataset_path))
     logger.info("Loaded %d eval samples from %s", len(dataset), dataset_path)
  
     # ── Run each method ────────────────────────────────────────────────

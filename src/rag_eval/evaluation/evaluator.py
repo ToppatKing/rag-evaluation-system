@@ -47,9 +47,34 @@ class GeminiJudge:
     LLM-as-judge using Gemini 1.5 Flash (free).
     """
 
+    _FALLBACK_MODELS = ("gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash")
+
     def __init__(self, model_name="gemini-1.5-flash"):
-        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-        self.model = genai.GenerativeModel(model_name)
+        self.model_name = model_name
+        self.model = None
+        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        if api_key:
+            try:
+                genai.configure(api_key=api_key)
+                self.model = genai.GenerativeModel(model_name)
+            except Exception as exc:  # pragma: no cover - runtime fallback
+                logger.warning("Gemini judge initialization failed (%s); using fallback", exc)
+
+    def _call_model(self, prompt: str):
+        if self.model is None:
+            raise RuntimeError("Gemini judge model not available")
+
+        last_exc: Exception | None = None
+        candidates = [self.model_name] + [model for model in self._FALLBACK_MODELS if model != self.model_name]
+        for candidate in candidates:
+            try:
+                return genai.GenerativeModel(candidate).generate_content(prompt)
+            except Exception as exc:  # pragma: no cover - runtime fallback
+                last_exc = exc
+                logger.debug("Gemini judge model %s failed: %s", candidate, exc)
+        if last_exc is not None:
+            raise last_exc
+        raise RuntimeError("No Gemini judge models available")
 
     def judge(self, question: str, answer: str, context: str) -> str:
         prompt = f"""
@@ -61,8 +86,15 @@ Context: {context}
 Evaluate correctness, faithfulness, and relevance.
 Respond with a score from 0 to 1 and a short explanation.
 """
-        response = self.model.generate_content(prompt)
-        return response.text
+        if self.model is None:
+            return "0.0 No judge available."
+
+        try:
+            response = self._call_model(prompt)
+            return getattr(response, "text", "") or ""
+        except Exception as exc:  # pragma: no cover - runtime fallback
+            logger.info("Gemini judge unavailable (%s); using fallback", exc)
+            return "0.0 No judge available."
 
 # ── Per-query result ──────────────────────────────────────────────────────────
 
@@ -300,7 +332,7 @@ class RAGEvaluator:
             metric_results["gemini_judge"] = MetricResult(
                 name="gemini_judge",
                 score=score,
-                error=None
+                error="" if score is not None else "No judge available",
             )
             for metric in self._metrics:
                 try:

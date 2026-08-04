@@ -15,7 +15,7 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
-import google.generativeai as genai
+from google.genai import Client
 import numpy as np
 import os
 
@@ -26,6 +26,8 @@ class BaseEmbedder(ABC):
     """Abstract interface for embedding models.
 
     Implementors must provide :meth:`embed_documents` and :meth:`embed_query`.
+    A convenience :meth:`embed` alias is also provided for callers that expect
+    a simple batch API.
     """
 
     @property
@@ -54,6 +56,13 @@ class BaseEmbedder(ABC):
         Returns:
             Float32 array of shape ``(dimension,)``.
         """
+
+    def embed(self, texts: list[str]) -> np.ndarray:
+        """Compatibility wrapper used by the retriever stack.
+
+        This mirrors a simpler batch-embedding API that some callers expect.
+        """
+        return self.embed_documents(texts)
 
     @staticmethod
     def _l2_normalise(vectors: np.ndarray) -> np.ndarray:
@@ -119,46 +128,109 @@ class SentenceTransformerEmbedder(BaseEmbedder):
 # ── Gemini backend ────────────────────────────────────────────────────────────
 
 class GeminiEmbedder(BaseEmbedder):
-    """
-    Embeddings via Google Gemini API (free tier).
-    Requires GEMINI_API_KEY in environment.
-    """
-
-    def __init__(self, model_name: str = "models/embedding-001", normalize: bool = True):
-        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+    def __init__(
+        self,
+        model_name: str = "models/embedding-001",
+        normalize: bool = True,
+        fallback_embedder: BaseEmbedder | None = None,
+    ):
         self._model_name = model_name
         self._normalize = normalize
-        self._dim = 768  # Gemini embedding dimension
+        self._fallback_embedder = fallback_embedder
+        if self._fallback_embedder is None:
+            try:
+                self._fallback_embedder = SentenceTransformerEmbedder(
+                    model_name="all-MiniLM-L6-v2",
+                    batch_size=64,
+                    normalize=normalize,
+                )
+            except Exception as exc:  # pragma: no cover - best-effort fallback
+                logger.warning("Unable to initialize local fallback embedder: %s", exc)
+                self._fallback_embedder = None
+
+        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        self._client = Client(api_key=api_key) if api_key else None
+
+        # Gemini embedding dimension. If the remote backend is unavailable, fall
+        # back to the local embedder's dimension so the FAISS store is created
+        # with matching vector shapes.
+        self._dim = 768
+        self._use_fallback = False
+        if not api_key:
+            self._use_fallback = True
+            if self._fallback_embedder is not None:
+                self._dim = self._fallback_embedder.dimension
+        else:
+            try:
+                self._probe_remote()
+            except Exception as exc:  # pragma: no cover - exercised at runtime
+                logger.warning("Gemini embeddings unavailable (%s); using local fallback", exc)
+                self._use_fallback = True
+                if self._fallback_embedder is not None:
+                    self._dim = self._fallback_embedder.dimension
+
+    def _probe_remote(self) -> None:
+        if self._client is None:
+            raise RuntimeError("No Gemini client configured")
+        self._client.models.embed_content(model=self._model_name, contents="probe")
+
+    def _extract_embedding(self, response: Any) -> np.ndarray:
+        if hasattr(response, "embeddings") and response.embeddings:
+            embedding = response.embeddings[0]
+            if hasattr(embedding, "values"):
+                values = embedding.values
+            elif isinstance(embedding, dict):
+                values = embedding.get("values")
+            else:
+                values = None
+        elif isinstance(response, dict):
+            embedding = response.get("embedding") or response.get("embeddings", [{}])[0]
+            if isinstance(embedding, dict):
+                values = embedding.get("values") or embedding.get("embedding")
+            else:
+                values = embedding
+        else:
+            values = None
+
+        if values is None:
+            raise ValueError(f"Unable to parse Gemini embedding response: {response!r}")
+
+        vec = np.array(values, dtype=np.float32)
+        if self._normalize:
+            norm = np.linalg.norm(vec)
+            if norm > 0:
+                vec = vec / norm
+        return vec
+
+    def _embed_single(self, text: str) -> np.ndarray:
+        if self._use_fallback or self._client is None:
+            if self._fallback_embedder is None:
+                raise RuntimeError("Gemini embeddings unavailable and no local fallback embedder")
+            return self._fallback_embedder.embed_query(text)
+
+        try:
+            response = self._client.models.embed_content(model=self._model_name, contents=text)
+        except AttributeError:
+            response = self._client.embed_content(model=self._model_name, content=text)
+        except Exception as exc:  # pragma: no cover - exercised at runtime
+            if self._fallback_embedder is None:
+                raise
+            logger.warning("Gemini embedding failed (%s); falling back to local embeddings", exc)
+            self._use_fallback = True
+            self._dim = self._fallback_embedder.dimension
+            return self._fallback_embedder.embed_query(text)
+        return self._extract_embedding(response)
+
+    def embed_documents(self, texts: list[str]) -> np.ndarray:
+        vecs = [self._embed_single(t) for t in texts]
+        return np.vstack(vecs)
 
     @property
     def dimension(self) -> int:
         return self._dim
 
-     def embed_documents(self, texts: list[str]) -> np.ndarray:
-        vecs = []
-        for t in texts:
-            response = genai.embed_content(
-                model=self._model_name,
-                content=t,
-                task_type="retrieval_document"
-            )
-            vec = np.array(response["embedding"], dtype=np.float32)
-            if self._normalize:
-                vec /= np.linalg.norm(vec)
-            vecs.append(vec)
-        return np.vstack(vecs)
-
-
     def embed_query(self, query: str) -> np.ndarray:
-        response = genai.embed_content(
-            model=self._model_name,
-            content=query,
-            task_type="retrieval_query"
-        )
-        vec = np.array(response["embedding"], dtype=np.float32)
-        if self._normalize:
-            vec /= np.linalg.norm(vec)
-        return vec
+        return self._embed_single(query)
 
 # ── OpenAI backend ────────────────────────────────────────────────────────────
 
@@ -222,31 +294,52 @@ class OpenAIEmbedder:
 # ── Factory ───────────────────────────────────────────────────────────────────
 
 
-def build_embedder(config: dict[str, Any]) -> BaseEmbedder:
-    """Construct an embedder from a configuration dictionary.
+def build_embedder(cfg):
+    provider = cfg.get("provider", "sentence_transformer")
+    provider = provider.lower()
 
-    Args:
-        config: Must contain ``provider`` key (``"sentence_transformers"`` or
-            ``"openai"``) plus model-specific keys.
-
-    Returns:
-        A configured :class:`BaseEmbedder`.
-    """
-    provider = config.get("provider", "sentence_transformers")
-    model_name = str(config.get("model_name", ""))
-    batch_size = int(config.get("batch_size", 64))
-    normalize = bool(config.get("normalize", True))
-
-    if provider == "sentence_transformers":
+    if provider in {"sentence_transformer", "sentence-transformer", "local", "local_embedder"}:
         return SentenceTransformerEmbedder(
-            model_name=model_name or "all-MiniLM-L6-v2",
-            batch_size=batch_size,
-            normalize=normalize,
+            model_name=cfg.get("model", "all-MiniLM-L6-v2"),
+            batch_size=cfg.get("batch_size", 64),
+            normalize=cfg.get("normalize", True),
+            device=cfg.get("device")
         )
-    if provider == "openai":
+
+    elif provider == "openai":
         return OpenAIEmbedder(
-            model_name=model_name or "text-embedding-3-small",
-            batch_size=batch_size,
-            normalize=normalize,
+            model_name=cfg.get("model", "text-embedding-3-small"),
+            batch_size=cfg.get("batch_size", 100),
+            normalize=cfg.get("normalize", True),
+            api_key=cfg.get("api_key")
         )
-    raise ValueError(f"Unknown embedding provider: {provider!r}")
+
+    elif provider == "gemini":
+        api_key = cfg.get("api_key") or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        if not api_key:
+            logger.warning(
+                "No Gemini API key found; falling back to local sentence-transformers embeddings"
+            )
+            return SentenceTransformerEmbedder(
+                model_name=cfg.get("model", "all-MiniLM-L6-v2"),
+                batch_size=cfg.get("batch_size", 64),
+                normalize=cfg.get("normalize", True),
+                device=cfg.get("device"),
+            )
+            try:
+                return GeminiEmbedder(
+                    model_name=cfg.get("model", "models/embedding-001"),
+                    normalize=cfg.get("normalize", True),
+                    fallback_embedder=None,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Gemini embedder unavailable (%s); falling back to local sentence-transformers embeddings",
+                    exc,
+                )
+                return SentenceTransformerEmbedder(
+                    model_name=cfg.get("model", "all-MiniLM-L6-v2"),
+                    batch_size=cfg.get("batch_size", 64),
+                    normalize=cfg.get("normalize", True),
+                    device=cfg.get("device"),
+                )

@@ -131,11 +131,19 @@ class MMRRetriever(BaseRetriever):
         if not candidates:
             return []
 
+        normalized_candidates: list[RetrievedChunk] = []
+        for candidate in candidates:
+            if isinstance(candidate, tuple):
+                item, _score = candidate
+                normalized_candidates.append(item)
+            else:
+                normalized_candidates.append(candidate)
+
         # Build a matrix of candidate embeddings (re-embed the texts).
         # In practice the vector store may cache these; here we re-embed
         # to keep the implementation self-contained.
-        candidate_texts = [c.text for c in candidates]
-        candidate_vecs = self.embedder.embed(candidate_texts)  # (n, d)
+        candidate_texts = [c.text for c in normalized_candidates]
+        candidate_vecs = self.embedder.embed_documents(candidate_texts)  # (n, d)
         candidate_vecs = np.array(candidate_vecs)
 
         # Normalise for cosine similarity
@@ -145,9 +153,9 @@ class MMRRetriever(BaseRetriever):
         )
 
         selected_indices: list[int] = []
-        remaining = list(range(len(candidates)))
+        remaining = list(range(len(normalized_candidates)))
 
-        for _ in range(min(self.top_k, len(candidates))):
+        for _ in range(min(self.top_k, len(normalized_candidates))):
             if not remaining:
                 break
 
@@ -168,7 +176,7 @@ class MMRRetriever(BaseRetriever):
             selected_indices.append(chosen_global)
             remaining.pop(best_local)
 
-        return [candidates[i] for i in selected_indices]
+        return [normalized_candidates[i] for i in selected_indices]
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -341,6 +349,82 @@ class HyDERetriever(BaseRetriever):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Ensemble retriever
+# ──────────────────────────────────────────────────────────────────────────────
+
+class EnsembleRetriever(BaseRetriever):
+    """Run dense, MMR, and HyDE retrieval strategies together.
+
+    The ensemble executes each retriever independently, then merges their
+    results into a single ranked list. It also stores a breakdown of the
+    retrieved chunks per strategy so the caller can compare and contrast them.
+    """
+
+    def __init__(
+        self,
+        retrievers: list[BaseRetriever],
+        top_k: int = 5,
+    ) -> None:
+        self.retrievers = retrievers
+        self.top_k = top_k
+        self.last_breakdown: dict[str, list[RetrievedChunk]] = {}
+        self.last_comparison_summary: str = ""
+
+    @property
+    def name(self) -> str:
+        return "ensemble"
+
+    def _normalize_result(self, result: object) -> object:
+        if isinstance(result, tuple):
+            return result[0]
+        return result
+
+    def _chunk_text(self, chunk: object) -> str:
+        if chunk is None:
+            return ""
+        if hasattr(chunk, "text"):
+            return str(getattr(chunk, "text"))
+        if isinstance(chunk, dict):
+            return str(chunk.get("text", ""))
+        return str(chunk)
+
+    def retrieve(self, query: str) -> list[RetrievedChunk]:
+        strategy_results: dict[str, list[object]] = {}
+        for retriever in self.retrievers:
+            normalized = [self._normalize_result(result) for result in retriever.retrieve(query)]
+            strategy_results[retriever.name] = normalized
+
+        self.last_breakdown = strategy_results
+        self.last_comparison_summary = self._build_comparison_summary(strategy_results)
+
+        merged: list[object] = []
+        seen: set[tuple[str, str]] = set()
+        for chunks in strategy_results.values():
+            for chunk in chunks:
+                key = (str(getattr(chunk, "doc_id", "")), self._chunk_text(chunk))
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(chunk)
+
+        return merged[: self.top_k]
+
+    def _build_comparison_summary(self, strategy_results: dict[str, list[object]]) -> str:
+        if not strategy_results:
+            return "No retrieval strategies were run."
+
+        lines: list[str] = []
+        for strategy_name, chunks in strategy_results.items():
+            if not chunks:
+                lines.append(f"{strategy_name}: no results")
+                continue
+            previews = [self._chunk_text(chunk)[:80] for chunk in chunks]
+            text_preview = "; ".join(previews)
+            lines.append(f"{strategy_name}: {text_preview}")
+        return " | ".join(lines)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Factory  (updated to include hyde)
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -389,6 +473,18 @@ def build_retriever(
                 "retrieval.method: dense in config.yaml if you don't "
                 "have an LLM configured."
             )
+        from rag_eval.generation.generator import LocalGenerator
+
+        if isinstance(generator, LocalGenerator):
+            logger.warning(
+                "HyDE requires an LLM; falling back to dense retrieval when only a local generator is configured."
+            )
+            return DenseRetriever(
+                vector_store=vector_store,
+                embedder=embedder,
+                top_k=top_k,
+            )
+
         return HyDERetriever(
             vector_store=vector_store,
             embedder=embedder,
@@ -398,7 +494,42 @@ def build_retriever(
             domain_instruction=kwargs.get("domain_instruction", None),
         )
 
+    if method == "ensemble":
+        dense = DenseRetriever(
+            vector_store=vector_store,
+            embedder=embedder,
+            top_k=top_k,
+        )
+        mmr = MMRRetriever(
+            vector_store=vector_store,
+            embedder=embedder,
+            top_k=top_k,
+            fetch_k=kwargs.get("fetch_k", top_k * 4),
+            mmr_lambda=kwargs.get("mmr_lambda", 0.5),
+        )
+        if generator is None:
+            raise ValueError(
+                "EnsembleRetriever requires a generator to build the HyDE member."
+            )
+        from rag_eval.generation.generator import LocalGenerator
+
+        if isinstance(generator, LocalGenerator):
+            logger.warning(
+                "EnsembleRetriever with a local generator will omit the HyDE component to reduce latency."
+            )
+            return EnsembleRetriever([dense, mmr], top_k=top_k)
+
+        hyde = HyDERetriever(
+            vector_store=vector_store,
+            embedder=embedder,
+            generator=generator,
+            top_k=top_k,
+            n_hypothetical=kwargs.get("n_hypothetical", 1),
+            domain_instruction=kwargs.get("domain_instruction", None),
+        )
+        return EnsembleRetriever([dense, mmr, hyde], top_k=top_k)
+
     raise ValueError(
         f"Unknown retrieval method '{method}'. "
-        "Choose from: dense | mmr | hyde"
+        "Choose from: dense | mmr | hyde | ensemble"
     )
