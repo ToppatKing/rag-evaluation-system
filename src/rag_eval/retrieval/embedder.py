@@ -134,16 +134,20 @@ class GeminiEmbedder(BaseEmbedder):
     def dimension(self) -> int:
         return self._dim
 
-    def embed_documents(self, texts: list[str]) -> np.ndarray:
-        response = genai.embed_content(
-            model=self._model_name,
-            content=texts,
-            task_type="retrieval_document"
-        )
-        vecs = np.array(response["embedding"], dtype=np.float32)
-        if self._normalize:
-            vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
-        return vecs
+     def embed_documents(self, texts: list[str]) -> np.ndarray:
+        vecs = []
+        for t in texts:
+            response = genai.embed_content(
+                model=self._model_name,
+                content=t,
+                task_type="retrieval_document"
+            )
+            vec = np.array(response["embedding"], dtype=np.float32)
+            if self._normalize:
+                vec /= np.linalg.norm(vec)
+            vecs.append(vec)
+        return np.vstack(vecs)
+
 
     def embed_query(self, query: str) -> np.ndarray:
         response = genai.embed_content(
