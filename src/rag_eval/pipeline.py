@@ -139,6 +139,11 @@ class RAGPipeline:
         self._config = config or PipelineConfig()
         self._loader = DocumentLoader()
 
+    @property
+    def embedder(self) -> BaseEmbedder:
+        """Public access to the embedder instance for evaluation metrics."""
+        return self._embedder
+
     # ── Factory ───────────────────────────────────────────────────────────────
 
     @classmethod

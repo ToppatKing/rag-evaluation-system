@@ -118,7 +118,7 @@ def _run_evaluation(pipeline, dataset: EvalDataset, config: dict) -> tuple[list[
     eval_cfg = config.get("evaluation", {})
 
     # Re-use pipeline's embedder for answer relevancy to avoid loading the model twice
-    metrics = build_metrics(eval_cfg, embedder=pipeline._embedder)
+    metrics = build_metrics(eval_cfg, embedder=pipeline.embedder)
     evaluator = RAGEvaluator(metrics, pipeline, verbose=False)
 
     # Run the official evaluation framework
