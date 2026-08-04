@@ -114,11 +114,52 @@ class SentenceTransformerEmbedder(BaseEmbedder):
     def embed_query(self, query: str) -> np.ndarray:
         return self.embed_documents([query])[0]
 
+# ── Gemini backend ────────────────────────────────────────────────────────────
+import google.generativeai as genai
+
+class GeminiEmbedder(BaseEmbedder):
+    """
+    Embeddings via Google Gemini API (free tier).
+    Requires GEMINI_API_KEY in environment.
+    """
+
+    def __init__(self, model_name: str = "models/embedding-001", normalize: bool = True):
+        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+        self._model_name = model_name
+        self._normalize = normalize
+        self._dim = 768  # Gemini embedding dimension
+
+    @property
+    def dimension(self) -> int:
+        return self._dim
+
+    def embed_documents(self, texts: list[str]) -> np.ndarray:
+        response = genai.embed_content(
+            model=self._model_name,
+            content=texts,
+            task_type="retrieval_document"
+        )
+        vecs = np.array(response["embedding"], dtype=np.float32)
+        if self._normalize:
+            vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
+        return vecs
+
+    def embed_query(self, query: str) -> np.ndarray:
+        response = genai.embed_content(
+            model=self._model_name,
+            content=query,
+            task_type="retrieval_query"
+        )
+        vec = np.array(response["embedding"], dtype=np.float32)
+        if self._normalize:
+            vec /= np.linalg.norm(vec)
+        return vec
+
 
 # ── OpenAI backend ────────────────────────────────────────────────────────────
 
 
-class OpenAIEmbedder(BaseEmbedder):
+class OpenAIEmbedder:
     """Embeddings via the OpenAI Embeddings API.
 
     Requires ``OPENAI_API_KEY`` to be set in the environment or passed
