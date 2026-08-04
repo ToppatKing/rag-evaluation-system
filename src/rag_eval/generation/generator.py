@@ -309,8 +309,8 @@ class AnthropicGenerator(BaseGenerator):
 
 
 def build_generator(config: dict[str, Any]) -> BaseGenerator:
-    provider = config.get("provider", "openai")
-    model = str(config.get("model", ""))
+    provider = config.get("provider", "gemini")
+    model = str(config.get("model", "gemini-1.5-flash"))
     temperature = float(config.get("temperature", 0.1))
     max_tokens = int(config.get("max_tokens", 512))
     system_prompt = str(config.get("system_prompt", _DEFAULT_SYSTEM_PROMPT))
@@ -324,6 +324,7 @@ def build_generator(config: dict[str, Any]) -> BaseGenerator:
             system_prompt=system_prompt,
             api_key=api_key,
         )
+
     if provider == "anthropic":
         return AnthropicGenerator(
             model=model or "claude-haiku-4-5-20251001",
@@ -332,4 +333,13 @@ def build_generator(config: dict[str, Any]) -> BaseGenerator:
             system_prompt=system_prompt,
             api_key=api_key,
         )
+
+    if provider == "gemini":
+        return GeminiGenerator(
+            model_name=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            system_prompt=system_prompt,
+        )
+
     raise ValueError(f"Unknown generation provider: {provider!r}")
