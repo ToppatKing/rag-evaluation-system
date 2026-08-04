@@ -16,9 +16,9 @@ chunking:
 
 # ── Embedding ─────────────────────────────────────────────────────────────────
 embedding:
-  provider: "sentence_transformers"   # sentence_transformers | openai
-  # sentence_transformers backend
-  model_name: "all-MiniLM-L6-v2"
+  provider: gemini
+  model: models/embedding-001
+
   # openai backend
   # model_name: "text-embedding-3-small"
   batch_size: 64
